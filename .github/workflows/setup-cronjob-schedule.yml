@@ -1,0 +1,70 @@
+name: Setup Cron-Job.org Schedule (Manual)
+
+# 這個 workflow 不會自動執行，只能到 GitHub 網頁的 Actions 分頁手動按 "Run workflow" 觸發。
+# 用途：建立/更新 cron-job.org 上的排程任務，讓它定時呼叫本 repo 的
+# collect-youbike.yml workflow_dispatch API。
+
+on:
+  workflow_dispatch:
+    inputs:
+      interval:
+        description: "觸發間隔（分鐘，須可整除 60，例如 5、10、15、20、30）"
+        required: true
+        default: "5"
+      job_id:
+        description: "若要更新既有 cronjob，填入它的 jobId；留空則建立新的 cronjob"
+        required: false
+        default: ""
+      target_workflow_file:
+        description: "要被觸發的 workflow 檔名"
+        required: true
+        default: "collect-youbike.yml"
+      ref:
+        description: "要觸發的分支名稱"
+        required: true
+        default: "main"
+      dry_run:
+        description: "只預覽 payload，不實際呼叫 cron-job.org API"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run setup_cron_job.py
+        env:
+          CRONJOB_API_KEY: ${{ secrets.CRONJOB_API_KEY }}
+          # 注意：這裡故意不是用 GitHub Actions 內建的臨時 GITHUB_TOKEN，
+          # 而是用你另外存的長效 PAT（DISPATCH_PAT），因為這把 token 會被
+          # 寫進 cron-job.org 的排程設定裡，之後每次觸發都要重複使用，
+          # 內建的臨時 token 跑完這個 workflow 就失效了，不能拿來用。
+          GITHUB_TOKEN: ${{ secrets.DISPATCH_PAT }}
+        run: |
+          ARGS="--github-owner ${{ github.repository_owner }} \
+                --github-repo ${{ github.event.repository.name }} \
+                --workflow-file ${{ inputs.target_workflow_file }} \
+                --ref ${{ inputs.ref }} \
+                --interval ${{ inputs.interval }} \
+                --timezone Asia/Taipei"
+
+          if [ -n "${{ inputs.job_id }}" ]; then
+            ARGS="$ARGS --job-id ${{ inputs.job_id }}"
+          fi
+
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            ARGS="$ARGS --dry-run"
+          fi
+
+          python tools/setup_cron_job.py $ARGS
